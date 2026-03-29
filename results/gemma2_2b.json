@@ -1,0 +1,38 @@
+{
+  "model": "google/gemma-2-2b",
+  "architecture": {
+    "n_layers": 26,
+    "n_kv_heads": 4,
+    "head_dim": 256,
+    "gqa_ratio": "2:1"
+  },
+  "evaluation": {
+    "dataset": "wikitext-103-v1 validation",
+    "max_tokens": 50000,
+    "max_seq_length": 2048,
+    "stride": 512
+  },
+  "results": {
+    "FP16": 43.24,
+    "Wobble-3bit": 43.25,
+    "Wobble-2bit": 39.69,
+    "KIVI-3bit": 70.14,
+    "KIVI-2bit": 398.28,
+    "TurboQuant-3bit": 17950,
+    "TurboQuant-2bit": 18443
+  },
+  "deltas_vs_fp16_pct": {
+    "Wobble-3bit": 0.02,
+    "Wobble-2bit": -8.2,
+    "KIVI-3bit": 62.2,
+    "KIVI-2bit": 821.0,
+    "TurboQuant-3bit": 41400,
+    "TurboQuant-2bit": 42600
+  },
+  "wobble_config": {
+    "group_size": 32,
+    "js_divergence_threshold": 0.15,
+    "2bit_min_bits_per_dim": 1,
+    "3bit_min_bits_per_dim": 0
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "model": "mistralai/Mistral-7B-Instruct-v0.3",
+  "architecture": {
+    "n_layers": 32,
+    "n_kv_heads": 8,
+    "head_dim": 128,
+    "gqa_ratio": "4:1"
+  },
+  "evaluation": {
+    "dataset": "wikitext-103-v1 validation",
+    "max_tokens": 50000,
+    "max_seq_length": 2048,
+    "stride": 512
+  },
+  "results": {
+    "FP16": 5.38,
+    "Wobble-3bit": 6.06,
+    "Wobble-2bit": 42.83,
+    "KIVI-3bit": 6.35,
+    "KIVI-2bit": 198.09
+  },
+  "deltas_vs_fp16_pct": {
+    "Wobble-3bit": 12.6,
+    "Wobble-2bit": 696.1,
+    "KIVI-3bit": 18.0,
+    "KIVI-2bit": 3581.0
+  },
+  "wobble_config": {
+    "group_size": 32,
+    "js_divergence_threshold": 0.15,
+    "2bit_min_bits_per_dim": 1,
+    "3bit_min_bits_per_dim": 0
+  },
+  "profiling_findings": {
+    "variance_ratio_median": 13.0,
+    "variance_ratio_max": 3190.0,
+    "head_js_divergence_median": 0.37,
+    "dimension_correlation_mean_abs": 0.06,
+    "dominant_distribution": "gaussian"
+  }
+}
