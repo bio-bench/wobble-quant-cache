@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "Wobble: Adaptive KV Cache Quantization"
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+url: "https://github.com/bio-bench/wobble-quant-cache"
+repository-code: "https://github.com/bio-bench/wobble-quant-cache"
+license: MIT
+date-released: "2026-03-31"
+version: "0.1.0"
+keywords:
+  - quantization
+  - kv-cache
+  - large-language-models
+  - transformers
+  - adaptive-quantization
+abstract: >-
+  Adaptive per-dimension KV cache quantization for LLMs.
+  Measures which dimensions carry the most information and
+  allocates more bits to them, while low-variance "wobble"
+  dimensions get fewer. Achieves +0.02% perplexity
+  degradation at 3-bit on Gemma-2-2B (effectively lossless)
+  and beats KIVI at every bit-width on every model tested.
