@@ -1,6 +1,9 @@
 cff-version: 1.2.0
 title: "Wobble: Adaptive KV Cache Quantization"
 message: "If you use this software, please cite it using the metadata from this file."
+authors:
+  - family-names: Mohammed
+    given-names: Saleem
 type: software
 url: "https://github.com/bio-bench/wobble-quant-cache"
 repository-code: "https://github.com/bio-bench/wobble-quant-cache"
