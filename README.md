@@ -85,7 +85,7 @@ The bit allocation is rate-distortion optimal for independent Gaussian sources. 
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/wobble-quant-cache.git
+git clone https://github.com/bio-bench/wobble-quant-cache.git
 cd wobble-quant-cache
 pip install -e .
 ```
@@ -237,7 +237,7 @@ If you use Wobble in your research, please cite:
 @software{wobble2026,
   title  = {Wobble: Adaptive KV Cache Quantization},
   year   = {2026},
-  url    = {https://github.com/YOUR_USERNAME/wobble-quant-cache}
+  url    = {https://github.com/bio-bench/wobble-quant-cache}
 }
 ```
 
