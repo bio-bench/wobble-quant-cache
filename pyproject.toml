@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "wobble-quant-cache"
@@ -17,7 +17,11 @@ dependencies = [
     "scikit-learn>=1.3",
     "matplotlib>=3.7",
     "datasets>=2.16",
+    "accelerate>=0.26",
 ]
+
+[project.scripts]
+wobble-profile = "profiling.cli:main"
 
 [project.optional-dependencies]
 eval = ["lm-eval>=0.4"]

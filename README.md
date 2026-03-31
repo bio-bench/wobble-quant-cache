@@ -85,6 +85,15 @@ The bit allocation is rate-distortion optimal for independent Gaussian sources. 
 ## Quick Start
 
 ```bash
+pip install wobble-quant-cache
+
+# Profile any model's KV cache
+wobble-profile --model meta-llama/Llama-3-8B
+```
+
+Or install from source:
+
+```bash
 git clone https://github.com/bio-bench/wobble-quant-cache.git
 cd wobble-quant-cache
 pip install -e .
@@ -102,11 +111,26 @@ HF_TOKEN=your_token python experiments/reproduce_mistral.py
 
 ### Profile Your Own Model
 
-The profiling tools work standalone — you can analyze any model's KV cache structure without using Wobble for quantization.
+The profiling tools work standalone — you can analyze any model's KV cache structure without using Wobble for quantization. Architecture parameters are auto-detected from the model config.
+
+```bash
+# One command — works with any HuggingFace causal LM
+wobble-profile --model meta-llama/Llama-3-8B
+
+# Gated models need a token
+HF_TOKEN=your_token wobble-profile --model meta-llama/Llama-3-8B
+
+# Custom output directory and calibration size
+wobble-profile --model mistralai/Mistral-7B-v0.3 --output results/mistral --n-texts 80
+```
+
+This outputs a variance histogram, variance ratio plot, go/no-go assessment, and a profiling JSON report.
+
+#### Python API
 
 ```python
 from profiling.capture import profile_kv_cache
-from profiling.heads import compute_js_divergence_matrix, group_heads
+from profiling.heads import compute_js_divergence_matrix, check_head_diversity
 from profiling.report import generate_report
 
 # 1. Profile KV cache statistics
@@ -115,13 +139,12 @@ stats, reservoir = profile_kv_cache(
     n_layers=32, n_kv_heads=8, head_dim=128,
 )
 
-# 2. Group heads by distribution similarity
+# 2. Assess head diversity
 js_matrix = compute_js_divergence_matrix(stats, layer_idx=0)
-groups = group_heads(js_matrix, max_groups=8, divergence_threshold=0.15)
+head_diversity = check_head_diversity(js_matrix)
 
 # 3. Generate analysis report
-#    Outputs: variance ratios, kurtosis, head diversity, correlation structure
-generate_report(stats, output_dir="profiling_results/")
+generate_report(stats, head_diversity, output_dir="profiling_results/")
 ```
 
 ### Full Quantization Pipeline
