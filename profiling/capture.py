@@ -40,6 +40,11 @@ class StatsAccumulator:
     v_norm_sum: np.ndarray = field(init=False)
     v_norm_count: np.ndarray = field(init=False)
 
+    k_min: np.ndarray = field(init=False)
+    k_max: np.ndarray = field(init=False)
+    v_min: np.ndarray = field(init=False)
+    v_max: np.ndarray = field(init=False)
+
     def __post_init__(self) -> None:
         shape = (self.n_layers, self.n_kv_heads, self.head_dim)
         for prefix in ("k_", "v_"):
@@ -47,6 +52,8 @@ class StatsAccumulator:
             setattr(self, f"{prefix}mean", np.zeros(shape, dtype=np.float64))
             setattr(self, f"{prefix}m2", np.zeros(shape, dtype=np.float64))
             setattr(self, f"{prefix}m4", np.zeros(shape, dtype=np.float64))
+            setattr(self, f"{prefix}min", np.full(shape, np.inf, dtype=np.float64))
+            setattr(self, f"{prefix}max", np.full(shape, -np.inf, dtype=np.float64))
 
         head_shape = (self.n_layers, self.n_kv_heads)
         self.v_norm_sum = np.zeros(head_shape, dtype=np.float64)
@@ -101,6 +108,12 @@ class StatsAccumulator:
         self._parallel_update(self.v_count, self.v_mean, self.v_m2, self.v_m4,
                               layer_idx, v_np)
 
+        # Per-dimension min/max (reduce over seq_len axis=1)
+        self.k_min[layer_idx] = np.minimum(self.k_min[layer_idx], k_np.min(axis=1))
+        self.k_max[layer_idx] = np.maximum(self.k_max[layer_idx], k_np.max(axis=1))
+        self.v_min[layer_idx] = np.minimum(self.v_min[layer_idx], v_np.min(axis=1))
+        self.v_max[layer_idx] = np.maximum(self.v_max[layer_idx], v_np.max(axis=1))
+
         v_norms = np.linalg.norm(v_np, axis=-1)
         self.v_norm_sum[layer_idx] += np.sum(v_norms, axis=-1)
         self.v_norm_count[layer_idx] += v_np.shape[1]
@@ -127,6 +140,8 @@ class StatsAccumulator:
             results[f"{prefix}_kurtosis"] = kurtosis
             results[f"{prefix}_mean"] = mean
             results[f"{prefix}_count"] = count
+            results[f"{prefix}_min"] = getattr(self, f"{prefix}_min")
+            results[f"{prefix}_max"] = getattr(self, f"{prefix}_max")
 
         safe_norm_count = np.where(self.v_norm_count > 0, self.v_norm_count, 1)
         results["v_mean_norm"] = self.v_norm_sum / safe_norm_count

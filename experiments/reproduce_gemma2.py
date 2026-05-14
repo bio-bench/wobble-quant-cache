@@ -31,8 +31,8 @@ import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from profiling.capture import extract_kv_from_output
-from profiling.heads import group_heads
+from profiling.capture import profile_kv_cache
+from profiling.heads import compute_js_divergence_matrix, group_heads
 from wobble.baselines import quantize_kivi
 from wobble.evaluate import evaluate_perplexity
 from wobble.patch import (
@@ -65,91 +65,6 @@ def get_calibration_texts(tokenizer, n_texts=50, max_seq_length=2048):
             result.append(t)
     logger.info("Collected %d calibration texts", len(result))
     return result
-
-
-def profile_post_rope(model, tokenizer, cal_texts):
-    """Collect per-dimension statistics from post-RoPE KV values."""
-    logger.info("Profiling post-RoPE KV cache...")
-    device = next(model.parameters()).device
-    shape = (N_LAYERS, N_KV_HEADS, HEAD_DIM)
-
-    dim_min = np.full(shape, np.inf, dtype=np.float32)
-    dim_max = np.full(shape, -np.inf, dtype=np.float32)
-    dim_sum = np.zeros(shape, dtype=np.float64)
-    dim_sum_sq = np.zeros(shape, dtype=np.float64)
-    dim_count = np.zeros((N_LAYERS, N_KV_HEADS), dtype=np.int64)
-
-    for i, text in enumerate(cal_texts):
-        if (i + 1) % 10 == 0:
-            logger.info("Profiling: text %d / %d", i + 1, len(cal_texts))
-        inputs = tokenizer(text, return_tensors="pt", max_length=2048,
-                           truncation=True, padding=False).to(device)
-        with torch.no_grad():
-            out = model(**inputs, use_cache=True, return_dict=True)
-
-        kv_pairs = extract_kv_from_output(out.past_key_values)
-        for li, (k, v) in enumerate(kv_pairs):
-            for kv_t in [k, v]:
-                vals = kv_t.squeeze(0).float().cpu().numpy()
-                for h in range(N_KV_HEADS):
-                    dim_min[li, h] = np.minimum(dim_min[li, h], vals[h].min(axis=0))
-                    dim_max[li, h] = np.maximum(dim_max[li, h], vals[h].max(axis=0))
-                    dim_sum[li, h] += vals[h].sum(axis=0)
-                    dim_sum_sq[li, h] += (vals[h] ** 2).sum(axis=0)
-                    dim_count[li, h] += vals[h].shape[0]
-        del out, kv_pairs
-
-    safe_count = np.maximum(dim_count[:, :, np.newaxis], 1)
-    dim_mean = (dim_sum / safe_count).astype(np.float32)
-    dim_var = ((dim_sum_sq / safe_count) - dim_mean ** 2).astype(np.float32)
-    dim_var = np.maximum(dim_var, 1e-10)
-
-    logger.info("Profiling complete. Variance range: [%.4f, %.4f]",
-                dim_var.min(), dim_var.max())
-    return dim_min, dim_max, dim_mean, dim_var
-
-
-def compute_js_matrices(model, tokenizer, cal_texts):
-    """Compute JS divergence between KV heads for grouping."""
-    logger.info("Computing JS divergence matrices...")
-    device = next(model.parameters()).device
-    n_bins = 100
-    hist_range = (-5.0, 5.0)
-    histograms = np.zeros((N_LAYERS, N_KV_HEADS, n_bins), dtype=np.float64)
-
-    for i, text in enumerate(cal_texts[:30]):
-        if (i + 1) % 10 == 0:
-            logger.info("JS matrices: text %d / 30", i + 1)
-        inputs = tokenizer(text, return_tensors="pt", max_length=2048,
-                           truncation=True, padding=False).to(device)
-        with torch.no_grad():
-            out = model(**inputs, use_cache=True, return_dict=True)
-        kv_pairs = extract_kv_from_output(out.past_key_values)
-        for li, (k, v) in enumerate(kv_pairs):
-            for kv_t in [k, v]:
-                vals = kv_t.squeeze(0).float().cpu().numpy()
-                for h in range(N_KV_HEADS):
-                    hist, _ = np.histogram(vals[h].ravel(), bins=n_bins,
-                                           range=hist_range, density=False)
-                    histograms[li, h] += hist
-        del out, kv_pairs
-
-    histograms = histograms + 1e-10
-    hist_probs = histograms / histograms.sum(axis=-1, keepdims=True)
-
-    js_data = {}
-    for li in range(N_LAYERS):
-        js_mat = np.zeros((N_KV_HEADS, N_KV_HEADS), dtype=np.float32)
-        for h1 in range(N_KV_HEADS):
-            for h2 in range(h1 + 1, N_KV_HEADS):
-                m = 0.5 * (hist_probs[li, h1] + hist_probs[li, h2])
-                kl1 = np.sum(hist_probs[li, h1] * np.log(hist_probs[li, h1] / m))
-                kl2 = np.sum(hist_probs[li, h2] * np.log(hist_probs[li, h2] / m))
-                js = 0.5 * (kl1 + kl2)
-                js_mat[h1, h2] = js
-                js_mat[h2, h1] = js
-        js_data[f"layer_{li}"] = js_mat
-    return js_data
 
 
 def build_wobble_configs(dim_var, dim_min, dim_max, dim_mean, js_data,
@@ -197,10 +112,22 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Profiling
+    # Profiling — uses numerically stable Chan et al. streaming stats
     cal_texts = get_calibration_texts(tokenizer)
-    dim_min, dim_max, dim_mean, dim_var = profile_post_rope(model, tokenizer, cal_texts)
-    js_data = compute_js_matrices(model, tokenizer, cal_texts)
+    stats, _ = profile_kv_cache(model, tokenizer, cal_texts,
+                                N_LAYERS, N_KV_HEADS, HEAD_DIM)
+
+    # Average K/V statistics for build_config (applies same config to both)
+    dim_var = (stats["k_variance"] + stats["v_variance"]) / 2.0
+    dim_mean = ((stats["k_mean"] + stats["v_mean"]) / 2.0).astype(np.float32)
+    dim_min = np.minimum(stats["k_min"], stats["v_min"]).astype(np.float32)
+    dim_max = np.maximum(stats["k_max"], stats["v_max"]).astype(np.float32)
+
+    # Analytical JS divergence between heads (Gaussian-parametric)
+    js_data = {}
+    for li in range(N_LAYERS):
+        js_data[f"layer_{li}"] = compute_js_divergence_matrix(stats, li)
+
     del cal_texts
     gc.collect()
 
@@ -217,7 +144,7 @@ def main():
     logger.info("3-BIT COMPARISON")
 
     configs_3, h2g_3 = build_wobble_configs(dim_var, dim_min, dim_max, dim_mean,
-                                            js_data, target_bits=3.0)
+                                            js_data, target_bits=3.0, min_bits=1)
     q_fn = partial(quantize_wobble, all_configs=configs_3, all_h2g=h2g_3,
                    group_size=GROUP_SIZE)
     orig = patch_gemma2(model, q_fn)

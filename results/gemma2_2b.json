@@ -33,6 +33,6 @@
     "group_size": 32,
     "js_divergence_threshold": 0.15,
     "2bit_min_bits_per_dim": 1,
-    "3bit_min_bits_per_dim": 0
+    "3bit_min_bits_per_dim": 1
   }
 }

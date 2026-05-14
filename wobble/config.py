@@ -5,13 +5,13 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ModelConfig:
-    """Target model parameters."""
+    """Target model parameters. Auto-detected from model.config when possible."""
 
-    model_name: str = "mistralai/Mistral-7B-Instruct-v0.3"
-    n_layers: int = 32
+    model_name: str = "Qwen/Qwen3-1.7B"
+    n_layers: int = 28
     n_kv_heads: int = 8
     head_dim: int = 128
-    dtype: str = "float16"
+    dtype: str = "bfloat16"
 
 
 @dataclass
@@ -30,7 +30,7 @@ class CalibrationConfig:
 
 @dataclass
 class ProfilingConfig:
-    """Stage 1 profiling thresholds (go/no-go criteria)."""
+    """Profiling thresholds (go/no-go criteria)."""
 
     # Wobble detection: max/min variance ratio across dimensions
     dim_importance_variance_go: float = 10.0     # > 10:1 = strong signal
@@ -40,19 +40,25 @@ class ProfilingConfig:
     cross_head_js_go: float = 0.1     # > 0.1 nats = heads are different
     cross_head_js_nogo: float = 0.01  # < 0.01 = heads nearly identical
 
-    n_tiers: int = 3
-
 
 @dataclass
 class QuantizationConfig:
-    """Adaptive scalar quantization parameters."""
+    """Adaptive scalar quantization parameters.
 
-    target_bits: list[float] = field(default_factory=lambda: [2.0, 3.0])
+    CRITICAL: target_bits must include non-integer values to activate
+    adaptive allocation. At integer averages (2.0, 3.0), the greedy
+    allocator gives every dimension the same bits (uniform).
+
+    min_bits_per_dim must be >= 1. Setting to 0 replaces dims with their
+    mean, which destroys too much information.
+    """
+
+    target_bits: list[float] = field(default_factory=lambda: [1.5, 2.0, 2.5, 3.0])
     max_groups_per_layer: int = 8
     js_divergence_threshold: float = 0.15
     group_size: int = 32        # per-group local scaling window
     max_bits_per_dim: int = 8
-    min_bits_per_dim: int = 0   # 0 = use mean (full degeneracy)
+    min_bits_per_dim: int = 1   # MUST be >= 1, never 0
 
 
 @dataclass

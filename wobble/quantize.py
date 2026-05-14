@@ -4,9 +4,12 @@ Each dimension gets an integer bit-width assigned by greedy marginal
 distortion reduction. High-variance dimensions get more bits,
 low-variance "wobble" dimensions get fewer (potentially 0 = use mean).
 
-This is optimal for independent Gaussian dimensions -- and KV cache
-dimensions are largely uncorrelated (avg |corr| = 0.06), making
-scalar quantization strictly better than vector quantization.
+KV cache dimensions are largely uncorrelated (avg |corr| = 0.06),
+making per-dimension scalar quantization effective.
+
+Bit allocation uses empirically-calibrated marginal gains instead of
+the Gaussian high-rate approximation, which underestimates the value
+of promoting 1-bit dims to 2-bit by ~10x (see _MARGINAL_GAIN).
 """
 
 import logging
@@ -16,6 +19,27 @@ import numpy as np
 import torch
 
 logger = logging.getLogger(__name__)
+
+
+# Empirical marginal distortion reduction per unit variance for group-based
+# min/max quantization (group_size=32) of a Gaussian source.
+# Index = current bits; value = MSE/var reduction from adding 1 bit.
+# Computed via Monte Carlo: 200K samples from N(0,1), seed=42.
+#
+# The Gaussian high-rate formula (var * 0.75 * 4^-b) underestimates
+# the 1→2 bit gain by 9.6x, causing the greedy allocator to strand
+# dims at 1-bit when it shouldn't. These calibrated values fix that.
+_MARGINAL_GAIN = np.array([
+    0.0,          # 0→1: negative for min/max quant (1-bit worse than mean); unused with min_bits>=1
+    1.80400291,   # 1→2: the critical transition (formula says 0.1875 — 9.6x too low)
+    0.12658086,   # 2→3
+    0.02193849,   # 3→4
+    0.00465811,   # 4→5
+    0.00108032,   # 5→6
+    0.00026171,   # 6→7
+    0.0000639,    # 7→8
+    0.0,          # 8→9: beyond max_bits, no further gain
+], dtype=np.float64)
 
 
 @dataclass
@@ -60,16 +84,12 @@ def assign_bits_greedy(
     max_bits: int = 8,
     min_bits: int = 0,
 ) -> np.ndarray:
-    """Greedy per-dimension bit allocation via marginal distortion reduction.
+    """Greedy per-dimension bit allocation via calibrated marginal distortion.
 
     Iteratively assigns the next bit to the dimension where it reduces
-    distortion most. For scalar quantization of a Gaussian source, adding
-    1 bit to dimension d reduces distortion by:
-
-        delta = variance[d] * (3/4) * 4^(-current_bits[d])
-
-    This is optimal for independent Gaussian dimensions and produces
-    exactly the requested total budget.
+    distortion most. Uses empirically-calibrated marginal gains from
+    _MARGINAL_GAIN (group_size=32, Gaussian source) instead of the
+    high-rate approximation, which underestimates the 1→2 bit gain by 9.6x.
 
     Args:
         dim_variances: Shape [head_dim]. Per-dimension variance from profiling.
@@ -100,7 +120,7 @@ def assign_bits_greedy(
         )
 
     var = dim_variances.astype(np.float64)
-    gain = var * 0.75 * (4.0 ** (-bits.astype(np.float64)))
+    gain = var * _MARGINAL_GAIN[np.clip(bits, 0, len(_MARGINAL_GAIN) - 1)]
 
     for _ in range(remaining):
         masked_gain = np.where(bits < max_bits, gain, -1.0)
@@ -114,7 +134,7 @@ def assign_bits_greedy(
             break
 
         bits[best] += 1
-        gain[best] *= 0.25  # next marginal gain is 4x smaller
+        gain[best] = var[best] * _MARGINAL_GAIN[min(bits[best], len(_MARGINAL_GAIN) - 1)]
 
     actual_total = int(np.sum(bits))
     if actual_total != total_budget:
